@@ -1,129 +1,247 @@
 /* 房间信息监听相关 */
-const request: Object = global.require('request');
-
-// 请求头
-const HEADERS: Object = {
-  'os': 'android',
-  'IMEI': '864394020501237',
-  'version': '5.0.0',
-  'Connection': 'Keep-Alive'
-};
+import { getProxyIp } from '../proxy/index';
+const request = global.require('request');
 
 // 配置项
-const reqOption: Object = {
+const reqOption = {
   method: 'POST',
-  headers: HEADERS,
   json: true
 };
+
+function rStr(len) {
+  const str = 'QWERTYUIOPASDFGHJKLZXCVBNM1234567890';
+  let result = '';
+
+  for (let i = 0; i < len; i++) {
+    const rIndex = Math.floor(Math.random() * str.length);
+
+    result += str[rIndex];
+  }
+
+  return result;
+}
+
+function createHeaders(token) {
+  return {
+    'Content-Type': 'application/json;charset=utf-8',
+    appInfo: JSON.stringify({
+      vendor: 'apple',
+      deviceId: `${ rStr(8) }-${ rStr(4) }-${ rStr(4) }-${ rStr(4) }-${ rStr(12) }`,
+      appVersion: '6.0.1',
+      appBuild: '190420',
+      osVersion: '11.4.1',
+      osType: 'ios',
+      deviceName: 'iPhone 6s',
+      os: 'ios'
+    }),
+    'User-Agent': 'PocketFans201807/6.0.1 (iPhone; iOS 11.4.1; Scale/2.00)',
+    'Accept-Language': 'zh-Hans-AW;q=1',
+    Host: 'pocketapi.48.cn',
+    token
+  };
+}
 
 /**
  * 登录口袋48接口
  * @param { string } account : 用户名
  * @param { string } password: 密码
  */
-export function login(account: string, password: string): Promise{
-  return new Promise((resolve: Function, reject: Function): void=>{
+export function login(account, password) {
+  return new Promise((resolve, reject) => {
     request({
       ...reqOption,
-      uri: 'https://puser.48.cn/usersystem/api/user/v1/login/phone',
+      headers: createHeaders(),
+      uri: 'https://pocketapi.48.cn/user/api/v1/login/app/mobile',
       body: {
-        password,
-        account,
-        longitude: 0,
-        latitude: 0
-      }
-    }, (err: any, res: Object, body: Object): void=>{
-      if(err){
+        mobile: account,
+        pwd: password
+      },
+      gzip: true,
+      timeout: 60000,
+      proxy: getProxyIp()
+    }, (err, res, body) => {
+      if (err) {
         reject(err);
-      }else{
+      } else {
         resolve(body);
       }
     });
-  }).catch((err: Object): void=>{
+  }).catch((err) => {
     console.error(err);
   });
 }
 
 /**
- * 获取成员的相关信息
- * @param { number } memberId: 成员的ID
+ * 获取朋友的id
+ * @param { string } token
  */
-export function requestMemberInformation(memberId: number): Promise{
-  return new Promise((resolve: Function, reject: Function): void=>{
+export function getFriendsId(token) {
+  return new Promise((resolve, reject) => {
     request({
       ...reqOption,
-      uri: 'https://puser.48.cn/usersystem/api/user/member/v1/fans/room',
-      body: {
-        memberId
-      }
-    }, (err: any, res: Object, body: Object): void=>{
-      if(err){
+      headers: createHeaders(token),
+      uri: 'https://pocketapi.48.cn/user/api/v1/friendships/friends/id',
+      body: {},
+      gzip: true,
+      timeout: 30000,
+      proxy: getProxyIp()
+    }, (err, res, body) => {
+      if (err) {
         reject(err);
-      }else{
+      } else {
         resolve(body);
       }
     });
-  }).catch((err: Object): void=>{
-    console.error(err);
-  });
-}
-
-/**
- * 获取聚聚的相关信息
- * @param { number } userId: 用户的ID
- */
-export function requestUserInformation(userId: number): Promise{
-  return new Promise((resolve: Function, reject: Function): void=>{
-    request({
-      ...reqOption,
-      uri: `https://puser.48.cn/usersystem/api/user/v1/show/info/${ userId }`,
-      body: {
-        needRecommend: false,
-        needChatInfo: false,
-        needFriendsNum: false
-      }
-    }, (err: any, res: Object, body: Object): void=>{
-      if(err){
-        reject(err);
-      }else{
-        resolve(body);
-      }
-    });
-  }).catch((err: Object): void=>{
+  }).catch((err) => {
     console.error(err);
   });
 }
 
 /**
  * 获取房间信息
- * @param { number } roomId: 房间ID
- * @param { string } token : 登陆后得到的token
- * @param { number } limit : 返回的数据数量
+ * @param { number } roomId : 房间ID
+ * @param { string } token  : 登陆后得到的token
  */
-export function requestRoomMessage(roomId: number, token: string, limit: number = 1): Promise{
-  return new Promise((resolve: Function, reject: Function): void=>{
+export function requestRoomMessage(roomId, token) {
+  return new Promise((resolve, reject) => {
     request({
-      uri: 'https://pjuju.48.cn/imsystem/api/im/v1/member/room/message/mainpage',
+      uri: 'https://pocketapi.48.cn/im/api/v1/chatroom/msg/list/homeowner',
       method: 'POST',
-      headers: {
-        ...HEADERS,
-        token
-      },
+      headers: createHeaders(token),
       json: true,
       body: {
+        needTop1Msg: false,
         roomId,
-        chatType: 0,
-        lastTime: 0,
-        limit
-      }
-    }, (err: any, res: Object, body: Object): void=>{
-      if(err){
+        nextTime: 0
+      },
+      gzip: true,
+      timeout: 30000,
+      proxy: getProxyIp()
+    }, (err, res, body) => {
+      if (err) {
         reject(err);
-      }else{
+      } else {
         resolve(body);
       }
     });
-  }).catch((err: Object): void=>{
+  }).catch((err) => {
     console.error(err);
+  });
+}
+
+/**
+ * 获取翻牌信息
+ * @param { string } token : 登陆后得到的token
+ * @param { number } questionId: 问题id
+ * @param { number } answerId: 回答id
+ */
+export function requestFlipAnswer(token, questionId, answerId) {
+  return new Promise((resolve, reject) => {
+    request({
+      uri: 'https://pocketapi.48.cn/idolanswer/api/idolanswer/v1/question_answer/detail',
+      method: 'POST',
+      headers: createHeaders(token),
+      json: true,
+      body: {
+        questionId,
+        answerId
+      },
+      gzip: true,
+      timeout: 25000,
+      proxy: getProxyIp()
+    }, (err, res, body) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(body); // content.answer
+      }
+    });
+  }).catch((err) => {
+    console.error(err);
+  });
+}
+
+/**
+ * 获取房间信息列表
+ */
+export function requestRoomPage(token) {
+  return new Promise((resolve, reject) => {
+    request({
+      uri: 'https://pocketapi.48.cn/im/api/v1/conversation/page',
+      method: 'POST',
+      headers: createHeaders(token),
+      json: true,
+      body: { targetType: 0 },
+      gzip: true,
+      timeout: 60000,
+      proxy: getProxyIp()
+    }, (err, res, body) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(body);
+      }
+    });
+  }).catch((err) => {
+    console.error(err);
+  });
+}
+
+/**
+ * 获取单个直播间的信息
+ * @param { string } liveId
+ */
+export function getLiveInfo(liveId) {
+  return new Promise((resolve, reject) => {
+    request({
+      uri: 'https://pocketapi.48.cn/live/api/v1/live/getLiveOne',
+      method: 'POST',
+      headers: createHeaders(),
+      json: true,
+      body: { liveId },
+      timeout: 60000,
+      proxy: getProxyIp()
+    }, function(err, res, data) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
+  });
+}
+
+/**
+ * 获取直播列表
+ * @param { number } next
+ * @param { boolean } inLive
+ */
+export function getLiveList(next = 0, inLive = false) {
+  return new Promise((resolve, reject) => {
+    const body = {
+      debug: true,
+      next
+    };
+
+    if (inLive) {
+      body.groupId = 0;
+      body.record = false;
+    }
+
+    request({
+      uri: 'https://pocketapi.48.cn/live/api/v1/live/getLiveList',
+      method: 'POST',
+      headers: createHeaders(),
+      json: true,
+      body,
+      timeout: 60000,
+      proxy: getProxyIp()
+    }, function(err, res, data) {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(data);
+      }
+    });
   });
 }

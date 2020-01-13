@@ -1,10 +1,10 @@
-/* reducers */
 import { combineReducers } from 'redux-immutable';
 
-const reducers: Object = {};
+/* reducers */
+const reducers = {};
 
 /* 创建reducer */
-export function createReducer(asyncReducers: Object): Function{
+export function createReducer(asyncReducers) {
   return combineReducers({
     ...reducers,
     ...asyncReducers

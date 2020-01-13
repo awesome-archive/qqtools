@@ -1,38 +1,38 @@
 import $ from 'jquery';
-import post from './post';
-import { time } from '../../function';
+import { getLiveList } from './roomListener';
+import { time } from '../../utils';
 
-async function getList(qq: CoolQ): Promise<void>{
-  const data: string = await post();
-  const data2: Object = JSON.parse(data);
+async function getList(qq) {
+  try {
+    const data = await getLiveList(0, true);
+    let text = null;
 
-  let text: ?string = null;
-  if(data2.status === 200){
-    if('liveList' in data2.content && data2.content.liveList.length > 0){
-      const { liveList }: { liveList: Array } = data2.content;
+    if (data.status === 200) {
+      if ('liveList' in data.content && data.content.liveList.length > 0) {
+        const { liveList } = data.content;
 
-      text = `口袋48直播：（当前直播成员数：${ liveList.length }）`;
-      $.each(liveList, (index: number, item: Object): void=>{
-        text += `\n${ index + 1 }、${ item.title.split('的')[0] }\n`
-              + `标题：${ item.subTitle }\n`
-              + `开始时间：${ time('YY-MM-DD hh:mm:ss', item.startTime) }`;
-      });
-
-    }else{
-      text = '口袋48直播：\n当前无直播。';
+        text = `口袋48直播：（当前直播成员数：${ liveList.length }）`;
+        $.each(liveList, (index, item) => {
+          text += `\n${ index + 1 }、${ item.userInfo.nickname }\n`
+                + `标题：${ item.title }\n`
+                + `开始时间：${ time('YY-MM-DD hh:mm:ss', Number(item.ctime)) }`;
+        });
+      } else {
+        text = '口袋48直播：\n当前无直播。';
+      }
+    } else {
+      text = '[ERROR] 获取口袋48直播列表错误。\'';
     }
-  }else{
-    text = '[ERROR] 获取口袋48直播列表错误。\'';
+    await qq.sendMessage(text);
+  } catch (err) {
+    console.error(err);
   }
-  await qq.sendMessage(text);
 }
 
-function kd48Cb(qq: CoolQ): void{
-  if(qq.option.basic.is48LiveListener){
-    getList(qq);
-  }else{
-    qq.sendMessage('[WARNING] 口袋48直播相关功能未开启。');
-  }
+function kd48Cb(qq) {
+  if (!qq.option.basic.is48LiveListener) return void 0;
+
+  getList(qq);
 }
 
 export default kd48Cb;

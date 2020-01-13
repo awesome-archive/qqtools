@@ -1,16 +1,23 @@
-/* 异步加载模块 */
-import React, { Component } from 'react';
-import Bundle from './Bundle';
+/**
+ * 异步加载模块
+ */
+import React, { lazy, Suspense } from 'react';
+import { injectReducers } from '../store/store';
+import SwitchLoading from '../assembly/SwitchLoading/index';
+
+const Fallback = <SwitchLoading />;
 
 /**
  * 异步加载、注入模块和reducer
- * @param { Function } module: 需要异步注入的模块
+ * @param { Function } loader: 需要异步注入的模块
  */
-function asyncModule(module: Function): Function{
-  return (): Object=>(
-    <Bundle load={ module }>
-      { (Module: Object): Object => Module ? <Module /> : null }
-    </Bundle>
+function asyncModule(loader) {
+  const Module = lazy(loader);
+
+  return () => (
+    <Suspense fallback={ Fallback }>
+      <Module injectReducers={ injectReducers } />
+    </Suspense>
   );
 }
 

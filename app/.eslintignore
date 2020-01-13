@@ -1,7 +1,8 @@
-server
+# node
 node_modules
-config
-scripts
-.dll
-appInit.js
-build
+
+# build
+dist
+
+# cache
+.sweet/*

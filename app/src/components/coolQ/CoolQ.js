@@ -1,317 +1,545 @@
 import { message } from 'antd';
-import { requestRoomMessage, requestUserInformation } from '../kd48listerer/roomListener';
-import { templateReplace } from '../../function';
+import chunk from 'lodash-es/chunk';
+import { requestRoomMessage, requestFlipAnswer } from '../kd48listerer/roomListener';
+import { time } from '../../utils';
+import { chouka } from '../chouka/chouka';
+import * as storagecard from '../chouka/storagecard';
+import bestCards from '../chouka/bestCards';
+import getLevelPoint from '../chouka/getLevelPoint';
+const nunjucks = global.require('nunjucks');
 
-class CoolQ{
-  time: number;
-  qq: string;
-  port: string;
-  isError: boolean;
-  eventUrl: string;
-  eventSocket: ?WebSocket;
-  isEventSuccess: boolean;
-  apiUrl: string;
-  apiSocket: ?WebSocket;
-  isApiSuccess: boolean;
-  callback: ?Function;
+class CoolQ {
+  constructor(qq, port, callback) {
+    this.time = null; // 登录时间戳
+    this.qq = qq;     // qq号
+    this.port = port; // socket端口
+    this.isError = false;                                   // 判断是否错误
+    this.eventUrl = `ws://127.0.0.1:${ this.port }/event/`; // 地址
+    this.eventSocket = null;     // socket
+    this.isEventSuccess = false; // 判断是否连接成功
+    this.apiUrl = `ws://127.0.0.1:${ this.port }/api/`; // 地址
+    this.apiSocket = null;     // socket
+    this.isApiSuccess = false; // 判断是否连接成功
+    this.callback = callback;  // 获得信息后的回调
+    this.coolqEdition = 'air'; // 酷Q的版本
 
-  option: ?Object;
-  modianTitle: ?string;
-  modianGoal: ?string;
-  modianWorker: ?Worker;
-  members: ?RegExp;
-  roomListenerTimer: ?number;
-  roomLastTime: ?number;
-  kouDai48Token: ?string;
-  weiboWorker: ?Worker;
-  timingMessagePushTimer: ?Object;
-
-  onOpenEventSocket: Function;
-  onEventSocketError: Function;
-  onListenerEventMessage: Function;
-  onOpenApiSocket: Function;
-  onApiSocketError: Function;
-  onListenerApiMessage: Function;
-
-  constructor(qq: string, port: string, callback: Function): void{
-    this.time = null;                                         // 登录时间戳
-    this.qq = qq;                                             // qq号
-    this.port = port;                                         // socket端口
-    this.isError = false;                                     // 判断是否错误
-    this.eventUrl = `ws://127.0.0.1:${ this.port }/event/`;   // 地址
-    this.eventSocket = null;                                  // socket
-    this.isEventSuccess = false;                              // 判断是否连接成功
-    this.apiUrl = `ws://127.0.0.1:${ this.port }/api/`;       // 地址
-    this.apiSocket = null;                                    // socket
-    this.isApiSuccess = false;                                // 判断是否连接成功
-    this.callback = callback;                                 // 获得信息后的回调
-
-    this.option = null;                  // 配置
+    this.option = null; // 配置
     // 摩点项目相关
-    this.modianTitle = null;             // 摩点项目标题
-    this.modianGoal = null;              // 摩点项目目标
-    this.modianWorker = null;            // 摩点新线程
+    this.modianTitle = null;  // 摩点项目标题
+    this.modianGoal = null;   // 摩点项目目标
+    this.moxiId = null;       // moxi_id
+    this.modianWorker = null; // 摩点新线程
+    this.choukaJson = null;   // 抽卡配置
+    this.bukaQQNumber = null; // 允许群里补卡的qq号
     // 口袋48监听相关
-    this.members = null;                 // 监听指定成员
+    this.members = null;  // 监听指定成员
+    this.memberId = null; // 坚听成员id
     // 房间信息监听相关
-    this.roomListenerTimer = null;       // 轮询定时器
-    this.roomLastTime = null;            // 最后一次发言
-    this.kouDai48Token = null;           // token
+    this.roomListenerTimer = null; // 轮询定时器
+    this.roomLastTime = null;      // 最后一次发言
+    this.kouDai48Token = null;     // token
     // 微博监听相关
-    this.weiboWorker = null;             // 微博监听新线程
+    this.weiboWorker = null; // 微博监听新线程
+    // 绿洲
+    this.lvzhouWorker = null; // 绿洲监听新线程
     // 群内定时消息推送
-    this.timingMessagePushTimer = null;  // 群内定时消息推送定时器
+    this.timingMessagePushTimer = null; // 群内定时消息推送定时器
 
-    this.onOpenEventSocket = this._onOpenSocket.bind(this, 'isEventSuccess', 'event');
-    this.onEventSocketError = this._onSocketError.bind(this, 'event');
-    this.onListenerEventMessage = this._onListenerMessage.bind(this, 'event');
-    this.onOpenApiSocket = this._onOpenSocket.bind(this, 'isApiSuccess', 'api');
-    this.onApiSocketError = this._onSocketError.bind(this, 'api');
-    this.onListenerApiMessage = this._onListenerMessage.bind(this, 'api');
-
+    this.handleOpenEventSocket = this._handleOpenSocket.bind(this, 'isEventSuccess', 'event');
+    this.handleEventSocketError = this._handleSocketError.bind(this, 'event');
+    this.handleListenerEventMessage = this._handleListenerMessage.bind(this, 'event');
+    this.handleOpenApiSocket = this._handleOpenSocket.bind(this, 'isApiSuccess', 'api');
+    this.handleApiSocketError = this._handleSocketError.bind(this, 'api');
+    this.handleListenerApiMessage = this._handleListenerMessage.bind(this, 'api');
   }
+
   // 初始化连接
-  _onOpenSocket(key: string, type: string, event: Event): void{
+  _handleOpenSocket(key, type, event) {
+    // $FlowFixMe
     this[key] = true;
     message.success(`【${ this.qq }】 Socket: ${ type }连接成功！`);
   }
+
   // 连接失败
-  _onSocketError(type: string, event: Event): void{
+  _handleSocketError(type, event) {
     this.isError = true;
     message.error(`【${ this.qq }】 Socket: ${ type }连接失败！请检查酷Q的配置是否正确！`);
   }
+
   // 接收消息
-  _onListenerMessage(type: string, event: Event): void{
-    const dataJson: Object = JSON.parse(event.data);
-    const gn: number = Number(this.option.groupNumber);
-    console.log(dataJson);
+  _handleListenerMessage(type, event) {
+    const dataJson = JSON.parse(`${ event.data }`);
+    const gn = this.option ? Number(this.option.groupNumber) : 0;
+
+    console.log(dataJson); // debug
+
     // 群消息
-    if(type === 'event' && 'group_id' in dataJson && dataJson.group_id === gn && dataJson.self_id === Number(this.qq)){
+    if (type === 'event' && 'group_id' in dataJson && dataJson.group_id === gn && dataJson.self_id === Number(this.qq)) {
       // 群聊天
-      if(dataJson.message_type === 'group'){
-        this.callback(dataJson.message, this);
+      if (dataJson.message_type === 'group') {
+        this.callback && this.callback(dataJson, this);
       }
       // 新成员加入群
-      if(dataJson.post_type === 'event' && dataJson.event === 'group_increase' && this.option.basic.isNewGroupMember){
-        this.getGroupMemberInfo(dataJson.user_id);
+      if (
+        (dataJson.post_type === 'notice' || dataJson.post_type === 'event')
+        && (dataJson.notice_type === 'group_increase' || dataJson.event === 'group_increase')
+        && this.option
+        && this.option.basic.isNewGroupMember
+      ) {
+        this.getGroupMemberInfo(dataJson);
       }
     }
     // 群名片
-    if('data' in dataJson && 'nickname' in dataJson.data && 'group_id' in dataJson.data && dataJson.data.group_id === gn){
-      this.sendMessage(templateReplace(this.option.basic.welcomeNewGroupMember, {
-        nickname: dataJson.data.nickname
+    if ('data' in dataJson && 'nickname' in dataJson.data && 'group_id' in dataJson.data && dataJson.data.group_id === gn) {
+      const { nickname, user_id } = dataJson.data;
+
+      this.sendMessage(nunjucks.renderString(this.option ? this.option.basic.welcomeNewGroupMember : '', {
+        nickname,
+        userid: user_id
+      }));
+    }
+    // 酷Q版本
+    if ('data' in dataJson && 'coolq_edition' in dataJson.data) {
+      this.coolqEdition = dataJson.data.coolq_edition;
+    }
+  }
+
+  // 发送信息
+  sendMessage(messageStr) {
+    const groupNumber = Number(this.option.groupNumber);
+    const messageArr = messageStr.split(/\[qqtools:stage\]/g);
+
+    for (const item of messageArr) {
+      this.apiSocket.send(JSON.stringify({
+        action: 'send_group_msg',
+        params: {
+          group_id: groupNumber,
+          message: item
+        }
       }));
     }
   }
-  // 发送信息
-  sendMessage(message: string): void{
-    this.apiSocket.send(JSON.stringify({
-      action: 'send_group_msg',
-      params: {
-        group_id: Number(this.option.groupNumber),
-        message
-      }
-    }));
-  }
+
   // 查找群成员的名片
-  getGroupMemberInfo(userId: number): void{
-    this.apiSocket.send(JSON.stringify({
+  getGroupMemberInfo(dataJson) {
+    const userId = dataJson.user_id;
+
+    this.apiSocket && this.apiSocket.send(JSON.stringify({
       action: 'get_group_member_info',
       params: {
-        group_id: Number(this.option.groupNumber),
+        group_id: this.option ? Number(this.option.groupNumber) : 0,
         user_id: userId,
         type: 'group_member_info'
       }
     }));
   }
+
+  // 查询酷Q的信息
+  getCoolQVersionInfo() {
+    this.apiSocket && this.apiSocket.send(JSON.stringify({
+      action: 'get_version_info'
+    }));
+  }
+
   // 初始化
-  init(): void{
+  init() {
     // event
     this.eventSocket = new WebSocket(this.eventUrl);
-    this.eventSocket.addEventListener('open', this.onOpenEventSocket, false);
-    this.eventSocket.addEventListener('error', this.onEventSocketError, false);
-    this.eventSocket.addEventListener('message', this.onListenerEventMessage, false);
+
+    this.eventSocket.addEventListener('open', this.handleOpenEventSocket, false);
+    this.eventSocket.addEventListener('error', this.handleEventSocketError, false);
+    this.eventSocket.addEventListener('message', this.handleListenerEventMessage, false);
+
     // api
     this.apiSocket = new WebSocket(this.apiUrl);
-    this.apiSocket.addEventListener('open', this.onOpenApiSocket, false);
-    this.apiSocket.addEventListener('error', this.onApiSocketError, false);
-    this.apiSocket.addEventListener('message', this.onListenerApiMessage, false);
+
+    this.apiSocket.addEventListener('open', this.handleOpenApiSocket, false);
+    this.apiSocket.addEventListener('error', this.handleApiSocketError, false);
+    this.apiSocket.addEventListener('message', this.handleListenerApiMessage, false);
   }
+
   // 退出
-  outAndClear(): void{
+  outAndClear() {
     // 删除摩点的web worker
-    if(this.modianWorker){
+    if (this.modianWorker) {
       this.modianWorker.postMessage({
         type: 'cancel'
       });
+      // $FlowFixMe
       this.modianWorker.terminate();
       this.modianWorker = null;
     }
 
     // 关闭房间信息监听
-    if(this.roomListenerTimer !== null){
+    if (this.roomListenerTimer !== null) {
       global.clearTimeout(this.roomListenerTimer);
     }
 
     // 删除微博的web worker
-    if(this.weiboWorker){
+    if (this.weiboWorker) {
       this.weiboWorker.postMessage({
         type: 'cancel'
       });
+      // $FlowFixMe
       this.weiboWorker.terminate();
       this.weiboWorker = null;
     }
 
+    // 删除绿洲的web worker
+    if (this.lvzhouWorker) {
+      this.lvzhouWorker.postMessage({
+        type: 'cancel'
+      });
+      // $FlowFixMe
+      this.lvzhouWorker.terminate();
+      this.lvzhouWorker = null;
+    }
+
     // 删除群消息推送定时器
-    if(this.timingMessagePushTimer){
+    if (this.timingMessagePushTimer) {
       this.timingMessagePushTimer.cancel();
     }
 
     // --- 关闭socket ---
     // event
-    this.eventSocket.removeEventListener('open', this.onOpenEventSocket);
-    this.eventSocket.removeEventListener('error', this.onEventSocketError);
-    this.eventSocket.removeEventListener('message', this.onListenerEventMessage);
-    // api
-    this.apiSocket.removeEventListener('open', this.onOpenApiSocket);
-    this.apiSocket.removeEventListener('error', this.onApiSocketError);
-    this.apiSocket.removeEventListener('message', this.onListenerApiMessage);
+    this.eventSocket.removeEventListener('open', this.handleOpenEventSocket);
+    this.eventSocket.removeEventListener('error', this.handleEventSocketError);
+    this.eventSocket.removeEventListener('message', this.handleListenerEventMessage);
 
-    this.eventSocket.close();
-    this.apiSocket.close();
+    // api
+    this.apiSocket.removeEventListener('open', this.handleOpenApiSocket);
+    this.apiSocket.removeEventListener('error', this.handleApiSocketError);
+    this.apiSocket.removeEventListener('message', this.handleListenerApiMessage);
+
+    this.eventSocket && this.eventSocket.close();
+    this.apiSocket && this.apiSocket.close();
   }
 
   /* === 从此往下是业务相关 === */
 
-  // web worker监听到微打赏的返回信息
-  async listenModianWorkerCbInformation(event: Event): Promise<void>{
-    if(event.data.type === 'change'){
-      const { data, alreadyRaised, backerCount, endTime }: {
-        data: Array,
-        alreadyRaised: string,
-        backerCount: number,
-        endTime: string
-      } = event.data;
-      const { modianTemplate }: { modianTemplate: string } = this.option.basic;
-      // 倒序发送消息
-      for(let i: number = data.length - 1; i >= 0; i--){
-        const item: Object = data[i];
-        const msg: string = templateReplace(modianTemplate, {
-          id: item.nickname,
-          money: item.pay_amount,
-          modianname: this.modianTitle,
-          modianid: this.option.basic.modianId,
-          goal: this.modianGoal,
-          alreadyraised: alreadyRaised,
-          backercount: backerCount,
-          endtime: endTime
-        });
-        await this.sendMessage(msg);
+  // web worker监听到摩点的返回信息
+  async listenModianWorkerCbInformation(event) {
+    if (event.data.type === 'change') {
+      try {
+        const { data, alreadyRaised, backerCount, endTime, timedifference } = event.data;
+        const { modianTemplate, isChouka, isChoukaSendImage } = this.option.basic;
+        const amountDifference = (Number(this.modianGoal) - Number(alreadyRaised)).toFixed(2);
+        const { cards, money, multiple, db, sendImageLength, resetCardsToPoints } = this.choukaJson || {};
+        const levelPoint = cards ? getLevelPoint(cards) : {}; // 格式化等级对应的分数
+
+        // 倒序发送消息
+        for (let i = data.length - 1; i >= 0; i--) {
+          const item = data[i];
+
+          // 抽卡
+          const choukaStr = [];
+          let cqImage = '';
+          let cardsPointsMsg = '';
+
+          if (isChouka) {
+            // 把卡存入数据库
+            const kaResult = await storagecard.query(db, item.userid);
+            const record = kaResult.length === 0 ? {} : JSON.parse(kaResult[0].record);
+            let cardsPoints = 0; // 积分
+            const choukaResult = chouka(cards, money, Number(item.pay_amount), multiple);
+
+            for (const key in choukaResult) {
+              const item2 = choukaResult[key];
+              const str = `【${ item2.level }】${ item2.name } * ${ item2.length }`;
+
+              choukaStr.push(str);
+
+              if (resetCardsToPoints) {
+                // 转换成积分
+                if (item2.id in record) {
+                  // 有重复的卡片
+                  cardsPoints += levelPoint[item2.level] * item2.length;
+                } else {
+                  // 新卡片
+                  record[item2.id] = 1;
+                  cardsPoints += levelPoint[item2.level] * (item2.length - 1);
+                }
+              } else {
+                // 不转换成积分
+                if (item2.id in record) {
+                  // 有重复的卡片
+                  record[item2.id] += item2.length;
+                } else {
+                  // 新卡片
+                  record[item2.id] = item2.length;
+                }
+              }
+            }
+
+            if (resetCardsToPoints) {
+              cardsPointsMsg = `\n已经将重复的卡片转换成积分：${ cardsPoints }。`;
+            }
+
+            if (isChoukaSendImage && this.coolqEdition === 'pro') {
+              // 发送所有图片
+              const cqArr = [];
+
+              if (sendImageLength === undefined || sendImageLength === null) {
+                for (const key in choukaResult) {
+                  cqArr.push(`[CQ:image,file=${ choukaResult[key].image }]`);
+                }
+              } else {
+                cqArr.push(...bestCards(cards, sendImageLength === 0 ? Object.values(choukaResult).length : sendImageLength));
+              }
+
+              const chunkArr = chunk(cqArr, 10);
+              const sendArr = [];
+
+              for (const item of chunkArr) {
+                sendArr.push(item.join(''));
+              }
+
+              cqImage += sendArr.join('[qqtools:stage]');
+            }
+
+            // 把卡存入数据库
+            if (kaResult.length === 0) {
+              await storagecard.insert(db, item.userid, item.nickname, record, cardsPoints);
+            } else {
+              await storagecard.update(db, item.userid, item.nickname, record, (kaResult[0].points || 0) + cardsPoints);
+            }
+          }
+
+          const msg = nunjucks.renderString(modianTemplate, {
+            id: item.nickname,
+            money: item.pay_amount,
+            modianname: this.modianTitle,
+            modianid: this.option.basic.modianId,
+            goal: this.modianGoal,
+            alreadyraised: alreadyRaised,
+            backercount: backerCount,
+            amountdifference: amountDifference,
+            endtime: endTime,
+            timedifference,
+            chouka: `${ choukaStr.length === 0 ? '' : '抽卡结果：\n' }${ choukaStr.join('\n') }${ cardsPointsMsg }${ cqImage }`
+          });
+
+          await this.sendMessage(msg);
+        }
+      } catch (err) {
+        console.error(err);
       }
     }
   }
+
   // 监听信息
-  async listenRoomMessage(): Promise<void>{
-    try{
-      const data2: Object = await requestRoomMessage(this.option.basic.roomId, this.kouDai48Token);
-      if(!(data2.status === 200 && 'content' in data2)){
-        this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), 15000);
+  async listenRoomMessage() {
+    const basic = this?.option?.basic || {};
+    const times = basic.liveListeningInterval ? (basic.liveListeningInterval * 1000) : 15000;
+    let isSuccess = true;
+
+    try {
+      const data2 = await requestRoomMessage(basic.roomId, this.kouDai48Token);
+
+      console.log('request: data2', data2);
+
+      if (!(data2.status === 200 && 'content' in data2)) {
+        this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), times);
+
         return;
       }
-      const newTime: number = data2.content.data[0].msgTime;
+
+      const newTime = data2.content.message[0].msgTime;
+
       // 新时间大于旧时间，获取25条数据
-      if(!(newTime > this.roomLastTime)){
-        this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), 15000);
+      if (!(newTime > this.roomLastTime)) {
+        this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), times);
+
         return;
       }
-      const data3: Object = await requestRoomMessage(this.option.basic.roomId, this.kouDai48Token, 25);  // 重新获取数据
-      if(!(data3.status === 200 && 'content' in data3)){
-        this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), 15000);
+
+      const data3 = await requestRoomMessage(basic.roomId, this.kouDai48Token); // 重新获取数据
+
+      console.log('request: data3', data3);
+
+      if (!(data3.status === 200 && 'content' in data3)) {
+        this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), times);
+
         return;
       }
+
       // 格式化发送消息
-      const sendStr: string[] = [];
-      const data: Array = data3.content.data;
-      for(let i: number = 0, j: number = data.length; i < j; i++){
-        const item: Object = data[i];
-        if(item.msgTime > this.roomLastTime){
-          const extInfo: Object = JSON.parse(item.extInfo);
-          switch(extInfo.messageObject){
+      const sendStr = [];
+      const data = data3.content.message;
+
+      for (let i = 0, j = data.length; i < j; i++) {
+        const item = data[i];
+
+        if (item.msgTime > this.roomLastTime) {
+          const extInfo = JSON.parse(item.extInfo);
+          const msgTime = time('YY-MM-DD hh:mm:ss', item.msgTime);
+          const { nickName } = extInfo.user;
+          const { messageType } = extInfo;
+
+          switch (messageType) {
             // 普通信息
-            case 'text':
-              sendStr.push(`${ extInfo.senderName }：${ extInfo.text }\n`
-                         + `时间：${ item.msgTimeStr }`);
+            case 'TEXT':
+              sendStr.push(`${ extInfo.user.nickName }：${ extInfo.text }\n`
+                         + `时间：${ msgTime }`);
               break;
-            // 翻牌信息
-            case 'faipaiText':
-              const ui: Object = await requestUserInformation(extInfo.faipaiUserId);
-              sendStr.push(`${ ui.content.userInfo.nickName }：${ extInfo.faipaiContent }\n`
-                         + `${ extInfo.senderName }：${ extInfo.messageText }\n`
-                         + `时间：${ item.msgTimeStr }`);
+
+            // 回复信息
+            case 'REPLY':
+              sendStr.push(`${ extInfo.replyName }：${ extInfo.replyText }\n`
+                         + `${ nickName }：${ extInfo.text }\n`
+                         + `时间：${ msgTime }`);
               break;
+
             // 发送图片
-            case 'image':
-              const url: string = JSON.parse(item.bodys).url;
-              let txt: string = `${ extInfo.senderName }：`;
-              if(this.option.basic.isRoomSendImage) txt += `\n[CQ:image,file=${ url }]\n`;
-              txt += `${ url }\n`;
-              sendStr.push(`${ txt }时间：${ item.msgTimeStr }`);
+            case 'IMAGE':
+              const imgUrl = JSON.parse(item.bodys).url;
+              let txt = `${ nickName }：`;
+
+              // 判断是否是air还是pro，来发送图片或图片地址
+              if (this.option && this.option.basic.isRoomSendImage && this.coolqEdition === 'pro') {
+                txt += `\n[CQ:image,file=${ imgUrl }]\n`;
+              } else {
+                txt += `${ imgUrl }\n`;
+              }
+
+              sendStr.push(`${ txt }时间：${ msgTime }`);
               break;
+
             // 发送语音
-            case 'audio':
-              const url2: string = JSON.parse(item.bodys).url;
-              sendStr.push(`${ extInfo.senderName } 发送了一条语音：${ url2 }\n`
-                         + `时间：${ item.msgTimeStr }`);
+            case 'AUDIO':
+              const audioUrl = JSON.parse(item.bodys).url;
+
+              sendStr.push(`${ nickName } 发送了一条语音：${ audioUrl }\n`
+                         + `时间：${ msgTime }`);
+              // 判断是否是air还是pro，来发送语音，语音只能单独发送
+              if (this.option && this.option.basic.isRoomSendRecord && this.coolqEdition === 'pro') {
+                sendStr.push(`[CQ:record,file=${ audioUrl },magic=false]`);
+              }
               break;
+
             // 发送短视频
-            case 'videoRecord':
-              const url3: string = JSON.parse(item.bodys).url;
-              sendStr.push(`${ extInfo.senderName } 发送了一个视频：${ url3 }\n`
-                         + `时间：${ item.msgTimeStr }`);
+            case 'VIDEO':
+              const videoUrl = JSON.parse(item.bodys).url;
+
+              sendStr.push(`${ nickName } 发送了一个视频：${ videoUrl }\n`
+                         + `时间：${ msgTime }`);
               break;
+
             // 直播
-            case 'live':
-              sendStr.push(`${ extInfo.senderName } 正在直播\n`
-                         + `直播间：${ extInfo.referenceTitle }\n`
-                         + `直播标题：${ extInfo.referenceContent }\n`
-                         + `时间：${ item.msgTimeStr }`);
+            case 'LIVEPUSH':
+              sendStr.push(`${ nickName } 正在直播\n`
+                         + `直播标题：${ extInfo.liveTitle }\n`
+                         + `时间：${ msgTime }`);
               break;
-            // 花50个鸡腿的翻牌？不清楚是什么新功能，暂时先提示这么多
-            case 'idolFlip':
-              sendStr.push(`${ extInfo.senderName } 翻牌了 ${ extInfo.idolFlipUserName }的问题：\n`
-                         + `${ extInfo.idolFlipContent }\n`
-                         + `时间：${ item.msgTimeStr }`);
+
+            // 鸡腿翻牌
+            case 'FLIPCARD':
+              const fanpaiInfo = await requestFlipAnswer(this.kouDai48Token, extInfo.questionId, extInfo.answerId);
+              const msg = `${ nickName } 翻牌了 ${ fanpaiInfo.content.userName }的问题：\n`
+                        + `${ extInfo.question || fanpaiInfo.content.question }\n`
+                        + `回答：${ extInfo.answer || fanpaiInfo.content.answer }\n`
+                        + `时间：${ msgTime }`;
+
+              sendStr.push(msg);
+              break;
+
+            // 发表情
+            case 'EXPRESS':
+              sendStr.push(`${ nickName }：发送了一个表情。\n`
+                         + `时间：${ msgTime }`);
+              break;
+
+            // debug
+            default:
+              sendStr.push(`${ nickName }：未知信息类型，请联系开发者。\n`
+                         + `时间：${ msgTime }`);
               break;
           }
-        }else{
+        } else {
           break;
         }
       }
-      // 倒序数组发送消息
-      for(let i: number = sendStr.length - 1; i >= 0; i--){
-        await this.sendMessage(sendStr[i]);
-      }
+
       // 更新时间节点
       this.roomLastTime = data[0].msgTime;
-    }catch(err){
+
+      // 倒序数组发送消息
+      for (let i = sendStr.length - 1; i >= 0; i--) {
+        await this.sendMessage(sendStr[i]);
+      }
+    } catch (err) {
+      isSuccess = false;
       console.error(err);
     }
-    this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), 15000);
+
+    this.roomListenerTimer = global.setTimeout(this.listenRoomMessage.bind(this), isSuccess ? times : 15000);
   }
+
   // web worker监听到微博的返回信息
-  async listenWeiboWorkerCbInformation(event: Event): Promise<void>{
-    if(event.data.type === 'change'){
-      const { data }: { data: Array } = event.data;
-      // 倒序发送消息
-      for(let i: number = data.length - 1; i >= 0; i--){
-        const item: string = data[i];
-        await this.sendMessage(item);
+  async listenWeiboWorkerCbInformation(event) {
+    const { isWeiboAtAll } = this?.option?.basic || {};
+
+    if (event.data.type === 'change') {
+      try {
+        const { data } = event.data;
+
+        // 倒序发送消息
+        for (let i = data.length - 1; i >= 0; i--) {
+          const item = data[i];
+          let txt = item.data;
+
+          // @所有人的功能
+          if (isWeiboAtAll) txt = `[CQ:at,qq=all] ${ txt }`;
+
+          // 发送图片
+          if (this.option && this.option.basic.isWeiboSendImage && this.coolqEdition === 'pro' && item.pics.length > 0) {
+            txt += `[CQ:image,file=${ item.pics[0] }]`;
+          }
+
+          await this.sendMessage(txt);
+        }
+      } catch (err) {
+        console.error(err);
       }
     }
   }
+
+  // web worker监听到绿洲的返回信息
+  async listenLvzhouWorkerCbInformation(event) {
+    const { isLvzhouAtAll } = this?.option?.basic || {};
+
+    if (event.data.type === 'change') {
+      try {
+        const { data } = event.data;
+
+        // 倒序发送消息
+        for (let i = data.length - 1; i >= 0; i--) {
+          const item = data[i];
+          let txt = item.data;
+
+          // @所有人的功能
+          if (isLvzhouAtAll) txt = `[CQ:at,qq=all] ${ txt }`;
+
+          // 发送图片
+          if (this.option && this.option.basic.isLvzhouSendImage && this.coolqEdition === 'pro' && item.pics.length > 0) {
+            txt += `[CQ:image,file=${ item.pics[0] }]`;
+          }
+
+          await this.sendMessage(txt);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
   // 群内定时推送消息
-  async timingMessagePush(msg: string): Promise<void>{
-    await this.sendMessage(msg);
+  async timingMessagePush(msg) {
+    try {
+      await this.sendMessage(msg);
+    } catch (err) {
+      console.error(err);
+    }
   }
 }
 

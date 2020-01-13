@@ -1,85 +1,68 @@
 /* 微打赏监听回调函数 */
-import getModianInformation from './getModianInformation';
-import { templateReplace } from '../../function';
-import ModianListWorker from 'worker-loader?name=script/modianList_[hash]_worker.js!./modianList.worker';
-
-function modianCb(command: string[], qq: CoolQ): void{
-  if(!command[2]){
-    command[2] = '20';
-  }
-
-  if(qq.option.basic.isModian){
-    // 微打赏功能开启
-    switch(command[1]){
-      // 获取整体信息
-      case '0':
-      case '项目信息':
-        getAllMount(qq);
-        break;
-      // 获取聚聚榜
-      case '1':
-      case '聚聚榜':
-      // 获取打卡榜
-      case '2':
-      case '打卡榜':
-        // 命令兼容
-        if(command[1] === '聚聚榜'){
-          command[1] = '1';
-        }else if(command[1] === '打卡榜'){
-          command[1] = '2';
-        }
-        list(qq.option.basic.modianId, command[1], command[2], qq);
-        break;
-      // 获取订单信息
-      case '3':
-      case '订单':
-        dingDan(qq.option.basic.modianId, command[2], qq);
-        break;
-      // 发送微打赏相关信息
-      default:
-        sendModianInfor(qq);
-        break;
-    }
-  }else{
-    // 微打赏功能未开启
-    qq.sendMessage('[WARNING] 摩点相关功能未开启。');
-  }
-}
+import getModianInformation, { getModianInformationNoIdol } from './getModianInformation';
+import ModianListWorker from 'worker-loader?name=scripts/[hash:15].js!./modianList.worker';
+const nunjucks = global.require('nunjucks');
 
 /* 发送信息 */
-async function sendModianInfor(qq: CoolQ): Promise<void>{
-  const text: string = templateReplace(qq.option.basic.modianUrlTemplate, {
-    modianname: qq.modianTitle,
-    modianid: qq.option.basic.modianId
-  });
-  await qq.sendMessage(text);
+async function sendModianInfor(qq) {
+  try {
+    const text = nunjucks.renderString(qq.option.basic.modianUrlTemplate, {
+      modianname: qq.modianTitle,
+      modianid: qq.option.basic.modianId
+    });
+
+    await qq.sendMessage(text);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 /* 新线程计算排名 */
-async function list(proId: string, type: string, size: string, qq: CoolQ): Promise<void>{
-  const worker: Worker = new ModianListWorker();
-  const cb: Function = async(event: Event): Promise<void>=>{
-    await qq.sendMessage(event.data.text);
-    worker.removeEventListener('message', cb);
-    worker.terminate();
-  };
-  worker.addEventListener('message', cb, false);
-  worker.postMessage({
-    proId,
-    type,
-    size,
-    title: qq.modianTitle
-  });
+function list(proId, type, size, qq) {
+  try {
+    const { basic } = qq.option;
+
+    if (basic.noIdol) {
+      qq.sendMessage('ERROR: 非粉丝应援项目无法查询聚聚榜和打卡榜。');
+
+      return;
+    }
+    const worker = new ModianListWorker();
+    const cb = async (event) => {
+      await qq.sendMessage(event.data.text);
+      worker.removeEventListener('message', cb);
+      worker.terminate();
+    };
+
+    worker.addEventListener('message', cb, false);
+    worker.postMessage({
+      proId,
+      type,
+      size,
+      title: qq.modianTitle
+    });
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 /* 获取订单信息 */
-async function dingDan(proId: string, size: string, qq: CoolQ): Promise<void>{
-  const worker: Worker = new ModianListWorker();
-  const cb: Function = async(event: Event): Promise<void>=>{
+function dingDan(proId, size, qq) {
+  const { basic } = qq.option;
+
+  if (basic.noIdol) {
+    qq.sendMessage('ERROR: 非粉丝应援项目无法查询订单。');
+
+    return;
+  }
+
+  const worker = new ModianListWorker();
+  const cb = async (event) => {
     await qq.sendMessage(event.data.text);
     worker.removeEventListener('message', cb);
     worker.terminate();
   };
+
   worker.addEventListener('message', cb, false);
   worker.postMessage({
     proId,
@@ -90,14 +73,62 @@ async function dingDan(proId: string, size: string, qq: CoolQ): Promise<void>{
 }
 
 /* 获取已集资金额 */
-async function getAllMount(qq: CoolQ): Promise<void>{
-  const data: {
-    already_raised: number,
-    backer_count: number,
-    end_time: string
-  } = await getModianInformation(qq.option.basic.modianId);
+async function getAllMount(qq) {
+  const { basic } = qq.option;
+  const data = basic.noIdol
+    ? await getModianInformationNoIdol(basic.modianId)
+    : await getModianInformation(basic.modianId);
+
   await qq.sendMessage(`${ qq.modianTitle }: ￥${ data.already_raised } / ￥${ qq.modianGoal }，`
-    + `\n集资人数：${ data.backer_count }\n项目截至日期：${ data.end_time }`);
+                     + `\n集资人数：${ data.backer_count }\n项目截至日期：${ data.end_time }`);
+}
+
+function modianCb(command, qq) {
+  if (!command[2]) {
+    command[2] = '20';
+  }
+
+  const { basic } = qq.option;
+
+  // 摩点功能未开启
+  if (!basic.isModian) return void 0;
+
+  const { isModianLeaderboard, modianId } = basic;
+
+  switch (command[1]) {
+    // 获取整体信息
+    case '0':
+    case '项目信息':
+      isModianLeaderboard && getAllMount(qq);
+      break;
+
+    // 获取聚聚榜
+    case '1':
+    case '聚聚榜':
+
+    // 获取打卡榜
+    case '2':
+    case '打卡榜':
+      // 命令兼容
+      if (command[1] === '聚聚榜') {
+        command[1] = '1';
+      } else if (command[1] === '打卡榜') {
+        command[1] = '2';
+      }
+      isModianLeaderboard && list(modianId, command[1], command[2], qq);
+      break;
+
+    // 获取订单信息
+    case '3':
+    case '订单':
+      isModianLeaderboard && dingDan(modianId, command[2], qq);
+      break;
+
+    // 发送微打赏相关信息
+    default:
+      sendModianInfor(qq);
+      break;
+  }
 }
 
 export default modianCb;
